@@ -17,7 +17,14 @@ export type {
 export { LensRpcClient, buildFilters, MAX_PAGE_SIZE, MAX_CONTRACT_IDS_PER_FILTER } from './rpc-client.js';
 export type { RpcClientOptions, GetEventsArgs } from './rpc-client.js';
 
-export { EventPoller, defaultCursorKey, ingestionLag, APPROX_LEDGER_SECONDS } from './poller.js';
+export {
+  EventPoller,
+  defaultCursorKey,
+  ingestionLag,
+  APPROX_LEDGER_SECONDS,
+  DEFAULT_POLL_INTERVAL_MS,
+  DEFAULT_MAX_POLL_INTERVAL_MS,
+} from './poller.js';
 export type { PollerDeps, PollerProgress } from './poller.js';
 
 export {

@@ -184,6 +184,91 @@ test('empty pages are not yielded but still advance the cursor', async () => {
   assert.equal(client.requests[1].cursor, 'cur-empty');
 });
 
+test('consecutive empty polls use capped exponential idle backoff', async () => {
+  const sleeps = [];
+  const controller = new AbortController();
+  const client = fakeClient([
+    { events: [], cursor: 'empty-1' },
+    { events: [], cursor: 'empty-2' },
+    { events: [], cursor: 'empty-3' },
+    { events: [rawEvent(4695320, 0)], cursor: 'event' },
+  ]);
+  const poller = new EventPoller(
+    { contractIds: [SAC], startLedger: 4695000, pollIntervalMs: 100, maxPollIntervalMs: 250 },
+    {
+      client,
+      signal: controller.signal,
+      sleep: async (ms) => sleeps.push(ms),
+    },
+  );
+
+  await take(poller.stream(), 1);
+  assert.deepEqual(sleeps, [100, 200, 250]);
+});
+
+test('an event resets idle backoff before the next quiet poll', async () => {
+  const sleeps = [];
+  const controller = new AbortController();
+  const client = fakeClient([
+    { events: [], cursor: 'empty-1' },
+    { events: [], cursor: 'empty-2' },
+    { events: [rawEvent(4695317, 0)], cursor: 'event-1' },
+    { events: [], cursor: 'empty-after-event' },
+    { events: [rawEvent(4695318, 1)], cursor: 'event-2' },
+  ]);
+  const poller = new EventPoller(
+    { contractIds: [SAC], startLedger: 4695000, pollIntervalMs: 100, maxPollIntervalMs: 400 },
+    {
+      client,
+      signal: controller.signal,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        if (sleeps.length === 4) controller.abort();
+      },
+    },
+  );
+
+  await take(poller.stream(), 2);
+  assert.deepEqual(sleeps, [100, 200, 100, 100]);
+});
+
+test('a cap equal to the base interval preserves fixed polling', async () => {
+  const sleeps = [];
+  const controller = new AbortController();
+  const client = fakeClient([
+    { events: [], cursor: 'empty-1' },
+    { events: [], cursor: 'empty-2' },
+    { events: [], cursor: 'empty-3' },
+  ]);
+  const poller = new EventPoller(
+    { contractIds: [SAC], startLedger: 4695000, pollIntervalMs: 100, maxPollIntervalMs: 100 },
+    {
+      client,
+      signal: controller.signal,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        if (sleeps.length === 3) controller.abort();
+      },
+    },
+  );
+
+  await poller.stream().next();
+  assert.deepEqual(sleeps, [100, 100, 100]);
+});
+
+test('invalid idle polling intervals are rejected before the first request', async () => {
+  const client = fakeClient([{ events: [], cursor: 'empty' }]);
+  for (const options of [
+    { pollIntervalMs: -1 },
+    { pollIntervalMs: 100, maxPollIntervalMs: 99 },
+    { pollIntervalMs: 100, maxPollIntervalMs: Number.NaN },
+  ]) {
+    const poller = new EventPoller({ contractIds: [SAC], startLedger: 4695000, ...options }, { client });
+    await assert.rejects(() => poller.stream().next(), /pollIntervalMs|maxPollIntervalMs/);
+  }
+  assert.equal(client.requests.length, 0);
+});
+
 test('a short page marks the stream as caught up', async () => {
   const client = fakeClient([{ events: [rawEvent(4695317, 0)], cursor: 'cur-1' }]);
   const poller = new EventPoller({ contractIds: [SAC], startLedger: 4695000, pageSize: 200 }, {
