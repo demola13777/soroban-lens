@@ -87,6 +87,7 @@ Options:
       --page-size <n>      Events per RPC page, 1-10000 (default: 200).
       --poll-interval <ms> Wait after catching up to the tip (default: 2000).
       --poll-max-interval <ms> Maximum idle wait after repeated empty polls (default: 30000).
+      --stalled-threshold <ms> Warn if the RPC tip does not advance (default: 60000).
       --end-ledger <n>     Last ledger to read. Exits cleanly once passed.
       --type <kind>        contract | system | diagnostic (default: contract).
       --topic <seg>        Server-side topic filter segment: a base64 ScVal, or
@@ -111,6 +112,7 @@ Environment:
   LENS_POLL_INTERVAL_MS, LENS_POLL_MAX_INTERVAL_MS
   LENS_RPC_HEADERS (comma separated 'Name: value' pairs)
   LENS_RETRY_ATTEMPTS, LENS_RETRY_BASE_DELAY_MS, LENS_RETRY_MAX_DELAY_MS
+  LENS_STALLED_THRESHOLD_MS
   LENS_METRICS_PORT, LENS_METRICS_HOST
 
 Examples:
@@ -130,6 +132,7 @@ async function main(argv: string[]): Promise<number> {
       'page-size': { type: 'string' },
       'poll-interval': { type: 'string' },
       'poll-max-interval': { type: 'string' },
+      'stalled-threshold': { type: 'string' },
       'end-ledger': { type: 'string' },
       type: { type: 'string' },
       topic: { type: 'string', multiple: true },
@@ -253,6 +256,7 @@ async function main(argv: string[]): Promise<number> {
       ...(values['poll-max-interval'] || process.env.LENS_POLL_MAX_INTERVAL_MS
         ? { maxPollIntervalMs: Number(values['poll-max-interval'] ?? process.env.LENS_POLL_MAX_INTERVAL_MS) }
         : {}),
+      ...numeric('stalledThresholdMs', values['stalled-threshold'] ?? process.env.LENS_STALLED_THRESHOLD_MS),
     },
     {
       client,
