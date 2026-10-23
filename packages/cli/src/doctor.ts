@@ -28,8 +28,8 @@ const MIN_NODE_MINOR = 13;
  * Preflight checks, run before anyone waits on a silent failure.
  *
  * Every check answers a question a newcomer would otherwise have to debug from
- * source: is my Node new enough, can I reach the RPC, is my contract id shaped
- * right, can I actually write to the database file.
+ * source: is my Node new enough, can I reach the RPC, is my contract id valid,
+ * can I actually write to the database file.
  */
 export async function runDoctor(config: LensConfig): Promise<CheckResult[]> {
   const checks = await Promise.all([
@@ -251,7 +251,7 @@ function checkRpcHeaders(headers: Record<string, string>): CheckResult {
   };
 }
 
-/** Contract ids are StrKey: 'C' followed by 55 base32 characters. */
+/** Contract ids are StrKeys with the correct prefix, shape and checksum. */
 
 function checkContractIds(contractIds: string[]): CheckResult {
   if (contractIds.length === 0) {

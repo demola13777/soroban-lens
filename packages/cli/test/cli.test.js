@@ -114,6 +114,16 @@ test('doctor rejects an account id given where a contract id belongs', async () 
   assert.match(check.fix, /Account ids start with 'G'/);
 });
 
+test('doctor rejects a contract-shaped id with a mistyped checksum character', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'lens-doctor-checksum-'));
+  const mistyped = `C${SAC[1] === 'A' ? 'B' : 'A'}${SAC.slice(2)}`;
+  const config = resolveConfig({ dataDir: dir, db: join(dir, 'lens.db'), rpcUrl: DEAD_RPC, contracts: [mistyped] }, {});
+  const check = find(await runDoctor(config), 'Contract IDs');
+  assert.equal(check.status, 'fail');
+  assert.match(check.detail, /not contract StrKeys/);
+  assert.match(check.fix, /fails its checksum/);
+});
+
 test('doctor warns, but does not fail, when no contract is configured', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'lens-doctor-'));
   const config = resolveConfig({ dataDir: dir, db: join(dir, 'lens.db'), rpcUrl: DEAD_RPC }, {});

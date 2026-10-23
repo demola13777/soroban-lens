@@ -19,6 +19,20 @@ test('metrics endpoint serves live text, handles methods, and closes cleanly', a
     const post = await fetch(`${url}/metrics`, { method: 'POST' });
     assert.equal(post.status, 405);
     assert.equal(post.headers.get('allow'), 'GET, HEAD');
+    const live = await fetch(`${url}/healthz`);
+    assert.equal(live.status, 200);
+    assert.deepEqual(await live.json(), { status: 'ok' });
+    const notReady = await fetch(`${url}/readyz`);
+    assert.equal(notReady.status, 503);
+    assert.deepEqual(await notReady.json(), { status: 'not_ready' });
+    metrics.pageFetched();
+    const ready = await fetch(`${url}/readyz`);
+    assert.equal(ready.status, 200);
+    assert.deepEqual(await ready.json(), { status: 'ready' });
+    metrics.rpcExhausted();
+    assert.equal((await fetch(`${url}/readyz`)).status, 503);
+    metrics.pageFetched();
+    assert.equal((await fetch(`${url}/readyz`)).status, 200);
     assert.equal((await fetch(`${url}/`)).status, 404);
     await assert.rejects(startMetricsServer(metrics, port), { code: 'EADDRINUSE' });
   } finally {

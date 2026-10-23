@@ -2,16 +2,12 @@ import {
   EventPoller, FailoverRpcClient, StellarArchiveSource, buildFilters, defaultCursorKey, describeClockSkew, IngestMetrics,
   startMetricsServer, closeMetricsServer, parseMetricsPort,
 } from '@soroban-lens/ingest';
-import { writeFileSync, existsSync, statSync } from 'node:fs'; import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
 import type { CursorStore, CursorState } from '@soroban-lens/ingest';
 import { SqliteEventStore } from '@soroban-lens/store';
 import type { EventStore } from '@soroban-lens/store';
 import type { LensConfig } from './config.js';
 import { SpecFetcher, rpcSpecSource } from './specs.js';
-
-export const INDEXER_HEARTBEAT_FILE = join(tmpdir(), 'lens-indexer-heartbeat');
-
 
 /**
  * Adapts the `EventStore` to Module 1's `CursorStore` interface, so resume
@@ -167,7 +163,12 @@ export async function runIndexer(options: IndexerOptions): Promise<IndexerResult
 
   try {
     if (metricsPort !== undefined) {
-      metricsServer = await startMetricsServer(metrics, metricsPort, process.env.LENS_METRICS_HOST ?? '127.0.0.1');
+      metricsServer = await startMetricsServer(
+        metrics,
+        metricsPort,
+        process.env.LENS_METRICS_HOST ?? '127.0.0.1',
+        Math.max(config.pollIntervalMs * 3, 1000),
+      );
       log(`metrics listening on ${process.env.LENS_METRICS_HOST ?? '127.0.0.1'}:${metricsPort}/metrics`);
     }
     log(
@@ -226,10 +227,6 @@ export async function runIndexer(options: IndexerOptions): Promise<IndexerResult
     }
 
     for await (const batch of poller.stream()) {
-      try {
-        writeFileSync(INDEXER_HEARTBEAT_FILE, Date.now().toString());
-      } catch {}
-
       const added = await store.insertEvents(batch.events);
       // Watching every contract, the configured list is empty, so specs are
       // looked up as contracts first appear. Already-seen ids are a Set hit.

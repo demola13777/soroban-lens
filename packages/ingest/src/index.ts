@@ -12,10 +12,12 @@ export type {
   RetentionState,
   TopicSegment,
   EventType,
+  ChunkCursor,
+  ChunkState,
 } from './types.js';
 
 export { LensRpcClient, buildFilters, MAX_PAGE_SIZE, MAX_CONTRACT_IDS_PER_FILTER } from './rpc-client.js';
-export type { RpcClientOptions, GetEventsArgs } from './rpc-client.js';
+export type { RpcClientOptions, GetEventsArgs, GetEventsChunkedArgs, ChunkedEventBatch } from './rpc-client.js';
 
 export {
   EventPoller,
@@ -38,7 +40,7 @@ export type { ClockSkew } from './clock-skew.js';
 export { compareRetention, describeRetentionGap } from './retention.js';
 export type { RetentionComparison, RetentionSnapshot } from './retention.js';
 
-export { FileCursorStore, MemoryCursorStore } from './cursor.js';
+export { FileCursorStore, MemoryCursorStore, chunkCursorKey } from './cursor.js';
 export type { CursorStore, CursorState } from './cursor.js';
 
 export { NETWORKS, resolveNetwork, isNetworkName } from './networks.js';

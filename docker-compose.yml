@@ -37,11 +37,13 @@ services:
       LENS_PAGE_SIZE: ${LENS_PAGE_SIZE:-200}
       LENS_POLL_INTERVAL_MS: ${LENS_POLL_INTERVAL_MS:-2000}
       LENS_POLL_MAX_INTERVAL_MS: ${LENS_POLL_MAX_INTERVAL_MS:-30000}
+      LENS_METRICS_PORT: 9090
+      LENS_METRICS_HOST: 0.0.0.0
     volumes:
       - lens-data:/app/data
     command: ["node", "packages/cli/dist/bin.js", "index"]
     healthcheck:
-      test: ["CMD", "node", "-e", "const fs=require('fs'), os=require('os'), path=require('path'); const p=path.join(os.tmpdir(),'lens-indexer-heartbeat'); if(!fs.existsSync(p)) process.exit(0); const t=Number(fs.readFileSync(p,'utf8')); if(Date.now()-t>60000) process.exit(1)"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9090/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 3

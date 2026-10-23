@@ -15,14 +15,26 @@ export async function startMetricsServer(
   metrics: IngestMetrics,
   port = 9090,
   host = '127.0.0.1',
+  readinessMaxAgeMs = 6_000,
 ): Promise<Server> {
   const server = createServer((request, response) => {
-    if (request.url !== '/metrics') {
-      response.writeHead(404).end();
-      return;
-    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end();
+      return;
+    }
+    if (request.url === '/healthz') {
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ status: 'ok' }));
+      return;
+    }
+    if (request.url === '/readyz') {
+      const ready = metrics.isReady(readinessMaxAgeMs);
+      response.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(request.method === 'HEAD' ? undefined : JSON.stringify({ status: ready ? 'ready' : 'not_ready' }));
+      return;
+    }
+    if (request.url !== '/metrics') {
+      response.writeHead(404).end();
       return;
     }
     response.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });

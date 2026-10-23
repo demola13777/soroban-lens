@@ -73,6 +73,16 @@ function numeric<K extends string>(key: K, raw: string | undefined): Partial<Rec
   return Number.isFinite(value) ? ({ [key]: value } as Record<K, number>) : {};
 }
 
+/** Validate CLI numbers before they can be passed to the poller or RPC client. */
+function parseNumericFlag(flag: string, raw: string | undefined, min: number, max = Infinity): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`error: ${flag} must be a finite number between ${min} and ${max}`);
+  }
+  return value;
+}
+
 const USAGE = `
 soroban-lens-ingest — stream Soroban contract events as NDJSON
 
@@ -169,6 +179,22 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
+  let startLedger: number | undefined;
+  let endLedger: number | undefined;
+  let pageSize: number | undefined;
+  let pollInterval: number | undefined;
+  let maxEvents: number | undefined;
+  try {
+    startLedger = parseNumericFlag('--start-ledger', values['start-ledger'], 1);
+    endLedger = parseNumericFlag('--end-ledger', values['end-ledger'], 1);
+    pageSize = parseNumericFlag('--page-size', values['page-size'], 1, 10_000);
+    pollInterval = parseNumericFlag('--poll-interval', values['poll-interval'], 0);
+    maxEvents = parseNumericFlag('--max-events', values['max-events'], 1);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    return 2;
+  }
+
   const network = resolveNetwork(
     values.network ?? process.env.LENS_NETWORK ?? 'testnet',
     values['rpc-url'] ?? process.env.LENS_RPC_URL,
@@ -201,8 +227,6 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
-  const endLedger = values['end-ledger'] ? Number(values['end-ledger']) : undefined;
-  const startLedger = values['start-ledger'] ? Number(values['start-ledger']) : undefined;
   if (endLedger !== undefined && startLedger !== undefined && endLedger < startLedger) {
     process.stderr.write(
       `error: --end-ledger (${endLedger}) is before --start-ledger (${startLedger})\n`,
@@ -251,8 +275,8 @@ async function main(argv: string[]): Promise<number> {
       ...(topics ? { topics } : {}),
       ...(endLedger !== undefined ? { endLedger } : {}),
       ...(startLedger !== undefined ? { startLedger } : {}),
-      ...(values['page-size'] ? { pageSize: Number(values['page-size']) } : {}),
-      ...(values['poll-interval'] ? { pollIntervalMs: Number(values['poll-interval']) } : {}),
+      ...(pageSize !== undefined ? { pageSize } : {}),
+      ...(pollInterval !== undefined ? { pollIntervalMs: pollInterval } : {}),
       ...(values['poll-max-interval'] || process.env.LENS_POLL_MAX_INTERVAL_MS
         ? { maxPollIntervalMs: Number(values['poll-max-interval'] ?? process.env.LENS_POLL_MAX_INTERVAL_MS) }
         : {}),
@@ -266,7 +290,7 @@ async function main(argv: string[]): Promise<number> {
     },
   );
 
-  const maxEvents = values['max-events'] ? Number(values['max-events']) : Infinity;
+  const eventLimit = maxEvents ?? Infinity;
   let emitted = 0;
 
   process.stderr.write(
@@ -287,8 +311,8 @@ async function main(argv: string[]): Promise<number> {
     for await (const batch of poller.stream()) {
       for (const event of batch.events) {
         process.stdout.write(`${JSON.stringify(event)}\n`);
-        if (++emitted >= maxEvents) {
-          process.stderr.write(`[ingest] reached --max-events (${maxEvents})\n`);
+        if (++emitted >= eventLimit) {
+          process.stderr.write(`[ingest] reached --max-events (${eventLimit})\n`);
           return 0;
         }
       }

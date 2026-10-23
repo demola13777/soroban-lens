@@ -5,6 +5,8 @@ Metrics are opt-in and need no extra runtime dependency. Start the full indexer:
 ```bash
 LENS_METRICS_PORT=9090 npm run index
 curl http://localhost:9090/metrics
+curl http://localhost:9090/healthz
+curl http://localhost:9090/readyz
 ```
 
 The standalone command also accepts `--metrics-port 9090` and
@@ -24,6 +26,33 @@ An invalid port or occupied bind address fails startup.
 | `lens_rpc_request_duration_seconds` | Histogram per `method`, covering every successful or failed attempt, excluding retry waits |
 | `lens_rpc_errors_total` | Failed attempts by `method` and `kind`: `rate_limit`, `http`, `timeout`, `json_rpc`, or `transport` |
 | `lens_cursor_restarts_total` | Successful cursor clears following a retention gap |
+
+The same server exposes `/healthz` and `/readyz` as JSON endpoints. Liveness
+returns `200 {"status":"ok"}` while the process can serve requests. Readiness
+returns `200 {"status":"ready"}` after a page fetch succeeds and for three
+configured poll intervals (at least one second); it returns
+`503 {"status":"not_ready"}` before the first page, after the RPC exhausts its
+retries, or when the last successful page is stale. Empty pages count as
+successful fetches, so a quiet contract at the network tip remains ready.
+After exhausted retries, the poller waits one interval and tries again, allowing
+readiness to recover when the RPC returns.
+
+The Compose indexer enables this endpoint on its internal network. A healthcheck
+can use it without publishing the metrics port to the host:
+
+```yaml
+services:
+  indexer:
+    environment:
+      LENS_METRICS_PORT: 9090
+      LENS_METRICS_HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9090/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+```
 
 Metrics live in memory and reset when the process restarts. The event counter is
 an ingestion throughput measure, not the number of unique rows in storage.

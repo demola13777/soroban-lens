@@ -8,6 +8,8 @@ import {
   APPROX_LEDGER_SECONDS,
   MAX_PAGE_SIZE,
   IngestMetrics,
+  isContractId,
+  RetryExhaustedError,
 } from '../dist/index.js';
 
 const SAC = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
@@ -517,6 +519,49 @@ test('a malformed contract id is rejected before any network call', () => {
     },
   );
   assert.equal(client.requests.length, 0, 'must fail before reaching the RPC');
+});
+
+test('a contract-shaped id with a changed character fails its checksum before RPC', () => {
+  const client = fakeClient([]);
+  const mistyped = `C${SAC[1] === 'A' ? 'B' : 'A'}${SAC.slice(2)}`;
+  assert.match(mistyped, /^C[A-Z2-7]{55}$/);
+  assert.equal(isContractId(mistyped), false);
+  assert.throws(
+    () => new EventPoller({ contractIds: [mistyped] }, { client }),
+    (error) => {
+      assert.equal(error.name, 'InvalidContractIdError');
+      assert.match(error.message, /checksum/);
+      return true;
+    },
+  );
+  assert.equal(client.requests.length, 0, 'must fail before reaching the RPC');
+});
+
+test('readiness drops after exhausted RPC retries and recovers on an empty page', async () => {
+  const metrics = new IngestMetrics();
+  const controller = new AbortController();
+  const client = fakeClient([
+    new RetryExhaustedError('RPC is unreachable', 2, new Error('connection refused')),
+    { events: [], cursor: 'cur-1' },
+  ]);
+  let sleeps = 0;
+  const poller = new EventPoller({ contractIds: [SAC], pollIntervalMs: 0 }, {
+    client,
+    metrics,
+    signal: controller.signal,
+    sleep: async () => {
+      if (sleeps++ === 0) assert.equal(metrics.isReady(1000), false);
+      else {
+        assert.equal(metrics.isReady(1000), true);
+        controller.abort();
+      }
+    },
+  });
+  const batches = [];
+  for await (const batch of poller.stream()) batches.push(batch);
+  assert.equal(batches.length, 0, 'empty successful pages should not require events to become ready');
+  assert.equal(sleeps, 2);
+  assert.equal(metrics.isReady(1000), true);
 });
 
 test('contract id validation catches every malformed id, not just the first', () => {

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
@@ -108,6 +110,27 @@ test('--end-ledger before --start-ledger is rejected', async () => {
   assert.match(stderr, /is before --start-ledger/);
 });
 
+// ── #130 numeric flag validation ────────────────────────────────────────────
+
+for (const [flag, outOfRange, flagArgs] of [
+  ['--start-ledger', '0'],
+  ['--end-ledger', '0'],
+  ['--page-size', '10001'],
+  ['--poll-interval', '-1', (value) => [`--poll-interval=${value}`]],
+  ['--max-events', '0'],
+]) {
+  test(`${flag} rejects non-numeric and out-of-range values before RPC`, async (t) => {
+    for (const [value, label] of [['abc', 'non-numeric'], [outOfRange, 'out-of-range']]) {
+      await t.test(label, async () => {
+        const args = flagArgs && label === 'out-of-range' ? flagArgs(value) : [flag, value];
+        const { code, stderr } = await cli(['-c', SAC, ...args]);
+        assert.equal(code, 2);
+        assert.match(stderr, new RegExp(flag));
+      });
+    }
+  });
+}
+
 // ── #6 retry tuning ──────────────────────────────────────────────────────────
 
 test('the retry flags and their env vars are documented in the help text', async () => {
@@ -127,4 +150,85 @@ test('a non-numeric retry value is ignored rather than becoming NaN', async () =
   );
   assert.notEqual(code, 2, `expected a runtime failure, not an argument error: ${stderr}`);
   assert.ok(!stderr.includes('NaN'), `NaN leaked into the retry path: ${stderr}`);
+});
+
+test('SIGTERM finishes the in-flight batch and exits cleanly', {
+  // Windows terminates child processes directly for SIGTERM; it cannot deliver
+  // a catchable signal like the POSIX environments used by Compose and CI.
+  skip: process.platform === 'win32',
+}, async () => {
+  let child;
+  let signalSent = false;
+  const server = createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    const { id, method } = JSON.parse(body);
+    if (method === 'getHealth') {
+      response.end(JSON.stringify({
+        jsonrpc: '2.0', id,
+        result: { status: 'healthy', latestLedger: 20, oldestLedger: 10, ledgerRetentionWindow: 10 },
+      }));
+      return;
+    }
+    if (method === 'getEvents') {
+      if (!signalSent) {
+        signalSent = true;
+        child.kill('SIGTERM');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      response.end(JSON.stringify({
+        jsonrpc: '2.0', id,
+        result: {
+          events: [{
+            id: 'event-1', type: 'contract', ledger: 20,
+            ledgerClosedAt: '2026-09-15T19:22:52Z', contractId: SAC,
+            topic: [], value: '', txHash: 'hash', transactionIndex: 0,
+            operationIndex: 0, inSuccessfulContractCall: true,
+          }],
+          cursor: 'cursor-1', latestLedger: 20, oldestLedger: 10,
+        },
+      }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const metricsProbe = createServer();
+  await new Promise((resolve) => metricsProbe.listen(0, '127.0.0.1', resolve));
+  const metricsAddress = metricsProbe.address();
+  assert.ok(metricsAddress && typeof metricsAddress === 'object');
+  await new Promise((resolve) => metricsProbe.close(resolve));
+  let stdout = '';
+  let stderr = '';
+  try {
+    child = spawn('node', [
+      BIN, '-c', SAC, '--no-resume', '--poll-interval', '0', '--metrics-port', String(metricsAddress.port),
+      '--rpc-url', `http://127.0.0.1:${address.port}`,
+    ], { env: { ...process.env, LENS_CONTRACT_IDS: '' } });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const code = await new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+      setTimeout(() => {
+        child.kill('SIGKILL');
+        reject(new Error('ingest child did not shut down after SIGTERM'));
+      }, 10_000).unref();
+    });
+    assert.equal(signalSent, true, 'the test RPC was never reached');
+    assert.equal(code, 0);
+    assert.match(stderr, /shutdown complete/);
+    assert.ok(stdout.endsWith('\n'), 'stdout ended with a partial NDJSON line');
+    const lines = stdout.trimEnd().split('\n');
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).id, 'event-1');
+  } finally {
+    if (child && child.exitCode === null) child.kill('SIGKILL');
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
